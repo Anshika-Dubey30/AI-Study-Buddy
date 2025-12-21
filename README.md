@@ -38,10 +38,12 @@ source venv/bin/activate
 
 pip install flask flask-cors nltk sumy pytesseract pillow
 python backend_api.py
+```
 
-2. Frontend Setup (React Native)
+### 2.Frontend Setup(ReactNative)
 ```bash
 cd StudyBuddy
 npm install
 npx expo start
+```
 Built with ❤️ by Anshika
