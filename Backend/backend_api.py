@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import sqlite3
 import os
+import platform
 # 👇 NEW: Security tools for passwords
 from werkzeug.security import generate_password_hash, check_password_hash
 
@@ -13,6 +14,8 @@ import nltk
 from pytesseract import image_to_string
 from PIL import Image
 
+if platform.system() == "Windows":
+    pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 # Download NLTK data (only runs once)
 nltk.download('punkt')
 nltk.download('punkt_tab')
