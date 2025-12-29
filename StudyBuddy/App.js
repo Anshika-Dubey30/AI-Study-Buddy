@@ -1,333 +1,252 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, TextInput, Alert, KeyboardAvoidingView, Platform, Image } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, TextInput, Alert, KeyboardAvoidingView, Platform, ActivityIndicator } from 'react-native';
 import axios from 'axios';
-// 👇 NEW IMPORT FOR THE CAMERA
 import * as ImagePicker from 'expo-image-picker';
+import * as Speech from 'expo-speech';
 
-// --- 1. TIME CONSTANTS ---
-const FOCUS_TIME = 25 * 60;
-const SHORT_BREAK = 5 * 60;
+// ⚠️ CHECK YOUR IP!
+const BASE_URL = 'http://10.112.73.9:5000'; 
 
-const PomodoroTimer = () => {
-    // ⚠️ CRUCIAL: Replace with your IP if testing on a real phone!
-    const BASE_URL = 'http://127.0.0.1:5000'; 
+// --- 🔐 AUTH COMPONENT (Login/Signup) ---
+const AuthScreen = ({ onLogin }) => {
+    const [isLogin, setIsLogin] = useState(true); // Toggle between Login and Signup
+    const [username, setUsername] = useState('');
+    const [password, setPassword] = useState('');
+    const [loading, setLoading] = useState(false);
 
-    // --- 2. STATE ---
+    const handleAuth = async () => {
+        if (!username || !password) { Alert.alert("Error", "Please fill in all fields"); return; }
+        setLoading(true);
+        const endpoint = isLogin ? '/auth/login' : '/auth/register';
+
+        try {
+            const response = await axios.post(`${BASE_URL}${endpoint}`, { username, password });
+            
+            if (isLogin) {
+                // Login Success -> Pass user data up to App
+                onLogin(response.data);
+            } else {
+                // Register Success -> Switch to login mode
+                Alert.alert("Success", "Account created! Please log in.");
+                setIsLogin(true);
+            }
+        } catch (error) {
+            const msg = error.response?.data?.error || "Connection Failed";
+            Alert.alert("Error", msg);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    return (
+        <View style={styles.authContainer}>
+            <Text style={styles.authTitle}>🧠 StudyBuddy</Text>
+            <Text style={styles.authSubtitle}>{isLogin ? 'Welcome Back, Genius.' : 'Join the Squad.'}</Text>
+
+            <TextInput style={styles.authInput} placeholder="Username" placeholderTextColor="#888" value={username} onChangeText={setUsername} autoCapitalize="none" />
+            <TextInput style={styles.authInput} placeholder="Password" placeholderTextColor="#888" value={password} onChangeText={setPassword} secureTextEntry />
+
+            <TouchableOpacity style={styles.authButton} onPress={handleAuth} disabled={loading}>
+                {loading ? <ActivityIndicator color="#000"/> : <Text style={styles.authButtonText}>{isLogin ? 'LOG IN' : 'SIGN UP'}</Text>}
+            </TouchableOpacity>
+
+            <TouchableOpacity onPress={() => setIsLogin(!isLogin)} style={{marginTop: 20}}>
+                <Text style={styles.switchText}>
+                    {isLogin ? "New here? Create Account" : "Already have an account? Log In"}
+                </Text>
+            </TouchableOpacity>
+        </View>
+    );
+};
+
+// --- 🧠 MAIN APP COMPONENT ---
+const MainApp = ({ user, onLogout }) => {
+    // CONSTANTS
+    const FOCUS_TIME = 25 * 60;
+    const SHORT_BREAK = 5 * 60;
+
+    // STATES
     const [timeRemaining, setTimeRemaining] = useState(FOCUS_TIME);
     const [isRunning, setIsRunning] = useState(false);
     const [sessionType, setSessionType] = useState('Focus'); 
     
-    // AI States
     const [noteText, setNoteText] = useState(''); 
     const [aiSummary, setAiSummary] = useState(''); 
     const [aiKeywords, setAiKeywords] = useState([]); 
     const [aiQuiz, setAiQuiz] = useState(null);
     const [isLoading, setIsLoading] = useState(false);
     
-    // History States
     const [historyList, setHistoryList] = useState([]);
     const [showHistory, setShowHistory] = useState(false);
 
-    // --- 3. HELPER FUNCTIONS ---
-    const formatTime = (totalSeconds) => {
-        const minutes = Math.floor(totalSeconds / 60);
-        const seconds = totalSeconds % 60;
-        return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+    // HELPER FUNCTIONS
+    const formatTime = (seconds) => {
+        const m = Math.floor(seconds / 60);
+        const s = seconds % 60;
+        return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
     };
 
-    const handlePhaseTransition = () => {
-        const nextType = sessionType === 'Focus' ? 'Break' : 'Focus';
-        const nextTime = nextType === 'Focus' ? FOCUS_TIME : SHORT_BREAK;
-        setSessionType(nextType);
-        setTimeRemaining(nextTime);
-        setIsRunning(true);
-    };
-
-    // --- 4. TEXT ANALYSIS FUNCTION ---
-    const analyzeUserNote = async () => {
-        if (!noteText.trim()) {
-            Alert.alert("Empty Note", "Please paste some notes first!");
-            return;
-        }
-
-        setIsLoading(true); 
-        setAiSummary(''); setAiKeywords([]); setAiQuiz(null);
-
-        try {
-            const response = await axios.post(`${BASE_URL}/notes/upload`, {
-                content: noteText, 
-                source_type: 'UserAppInput' 
-            });
-            
-            // Save Results
-            setAiSummary(response.data.summary); 
-            setAiKeywords(response.data.keywords); 
-            setAiQuiz(response.data.quiz);
-        } catch (error) {
-            console.error("Error:", error);
-            Alert.alert("Error", "Could not analyze text. Check server.");
-        } finally {
-            setIsLoading(false); 
-        }
-    };
-
-    // --- 5. UPDATED IMAGE SCANNING (WEB COMPATIBLE) ---
-    const pickAndAnalyzeImage = async () => {
-        // A. Request Permission
-        const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
-        if (permissionResult.granted === false) {
-            Alert.alert("Permission Required", "You need to allow access to photos!");
-            return;
-        }
-
-        // B. Open Gallery
-        const result = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.Images,
-            allowsEditing: true,
-            quality: 1,
+    const speakSummary = () => {
+        if (!aiSummary) return;
+        Speech.isSpeakingAsync().then(speaking => {
+            speaking ? Speech.stop() : Speech.speak(aiSummary, { rate: 0.9 });
         });
+    };
 
-        if (!result.canceled) {
-            setIsLoading(true);
-            setAiSummary(''); setAiKeywords([]); setAiQuiz(null);
-            setNoteText('Scanning Image... 📸'); 
+    const analyzeNote = async () => {
+        if (!noteText.trim()) return;
+        setIsLoading(true);
+        try {
+            const res = await axios.post(`${BASE_URL}/notes/upload`, { content: noteText });
+            setAiSummary(res.data.summary); 
+            setAiKeywords(res.data.keywords); 
+            setAiQuiz(res.data.quiz);
+        } catch (err) { Alert.alert("Error", "Analysis failed."); }
+        finally { setIsLoading(false); }
+    };
 
-            const asset = result.assets[0];
+    const pickImage = async () => {
+        const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!perm.granted) return Alert.alert("Need Permission");
+        
+        const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 1, base64: true });
+        
+        if (!res.canceled) {
+            setIsLoading(true); setNoteText("Scanning...");
             const formData = new FormData();
-
-            // 👇 NEW: Check if we are on Web or Mobile
+            
+            // Mobile vs Web Logic
             if (Platform.OS === 'web') {
-                // 🌍 WEB FIX: Fetch the image as a Blob first
-                const res = await fetch(asset.uri);
-                const blob = await res.blob();
+                const r = await fetch(res.assets[0].uri);
+                const blob = await r.blob();
                 formData.append('file', blob, 'upload.jpg');
             } else {
-                // 📱 MOBILE LOGIC (Android/iOS)
-                const localUri = asset.uri;
-                const filename = localUri.split('/').pop();
-                const match = /\.(\w+)$/.exec(filename);
-                const type = match ? `image/${match[1]}` : `image`;
-                formData.append('file', { uri: localUri, name: filename, type });
+                formData.append('file', {
+                    uri: res.assets[0].uri,
+                    name: 'upload.jpg',
+                    type: 'image/jpeg'
+                });
             }
 
             try {
-                // D. Send to Python Endpoint
-                const response = await axios.post(`${BASE_URL}/notes/upload-image`, formData, {
-                    headers: { 'Content-Type': 'multipart/form-data' },
-                });
-
-                // E. Show Results
-                setNoteText(response.data.original_text); 
+                const response = await axios.post(`${BASE_URL}/notes/upload-image`, formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+                setNoteText(response.data.original_text);
                 setAiSummary(response.data.summary);
                 setAiKeywords(response.data.keywords);
                 setAiQuiz(response.data.quiz);
-                Alert.alert("Success", "Image Scanned Successfully!");
-
-            } catch (error) {
-                console.error("OCR Error:", error);
-                setNoteText("Error scanning image.");
-                Alert.alert("OCR Error", "Check Python Terminal for details.");
-            } finally {
-                setIsLoading(false);
-            }
+            } catch (err) { setNoteText("Error"); Alert.alert("Scan Failed"); }
+            finally { setIsLoading(false); }
         }
     };
 
-    // --- 6. HISTORY FUNCTION ---
-    const fetchHistory = async () => {
-        try {
-            const response = await axios.get(`${BASE_URL}/notes/history`);
-            setHistoryList(response.data);
-            setShowHistory(!showHistory);
-        } catch (error) {
-            console.error(error);
-            Alert.alert("Error", "Could not load history");
-        }
-    };
-
-    // --- 7. TIMER ENGINE ---
     useEffect(() => {
         let interval = null;
-        if (isRunning && timeRemaining > 0) {
-            interval = setInterval(() => {
-                setTimeRemaining(prevTime => prevTime - 1); 
-            }, 1000);
-        } else if (timeRemaining === 0 && isRunning) {
-            clearInterval(interval);
-            handlePhaseTransition(); 
-        } else {
-            clearInterval(interval);
-        }
+        if (isRunning && timeRemaining > 0) interval = setInterval(() => setTimeRemaining(t => t - 1), 1000);
+        else if (timeRemaining === 0) { setIsRunning(false); setSessionType(prev => prev === 'Focus' ? 'Break' : 'Focus'); setTimeRemaining(sessionType === 'Focus' ? SHORT_BREAK : FOCUS_TIME); }
         return () => clearInterval(interval);
-    }, [isRunning, timeRemaining, sessionType]); 
+    }, [isRunning, timeRemaining]);
 
-    // --- 8. RENDER (UI) ---
     return (
-        <KeyboardAvoidingView 
-            behavior={Platform.OS === "ios" ? "padding" : "height"}
-            style={{flex: 1}}
-        >
-            <ScrollView contentContainerStyle={styles.container}>
-                
-                {/* TIMER */}
-                <Text style={styles.sessionText}>
-                    {sessionType === 'Focus' ? '🧠 FOCUS TIME' : '☕ SHORT BREAK'}
-                </Text>
-                <Text style={styles.timerText}>{formatTime(timeRemaining)}</Text>
-                
-                <TouchableOpacity style={styles.button} onPress={() => setIsRunning(prev => !prev)}>
-                    <Text style={styles.buttonText}>{isRunning ? 'PAUSE' : 'START'}</Text>
+        <ScrollView contentContainerStyle={styles.container}>
+            <View style={{flexDirection:'row', justifyContent:'space-between', width:'100%', alignItems:'center', marginBottom: 20}}>
+                <Text style={styles.title}>Welcome, {user.username} 👋</Text>
+                <TouchableOpacity onPress={onLogout} style={{backgroundColor:'#FF4444', padding:8, borderRadius:5}}>
+                    <Text style={{color:'white', fontWeight:'bold'}}>LOGOUT</Text>
                 </TouchableOpacity>
+            </View>
 
-                {/* INPUT SECTION */}
-                <View style={styles.inputSection}>
-                    <Text style={styles.sectionTitle}>📝 Study Notes</Text>
-                    <TextInput 
-                        style={styles.inputBox}
-                        placeholder="Paste notes OR scan an image..."
-                        placeholderTextColor="#888"
-                        multiline={true} 
-                        numberOfLines={4}
-                        value={noteText}
-                        onChangeText={setNoteText} 
-                    />
-                    
-                    {/* BUTTON ROW */}
-                    <View style={{flexDirection: 'row', justifyContent: 'space-between'}}>
-                        <TouchableOpacity 
-                            style={[styles.analyzeButton, {flex: 1, marginRight: 10}]} 
-                            onPress={analyzeUserNote} 
-                            disabled={isLoading} 
-                        >
-                            <Text style={styles.buttonText}>
-                                {isLoading ? '⏳' : '✨ ANALYZE'}
-                            </Text>
-                        </TouchableOpacity>
+            {/* TIMER */}
+            <Text style={styles.sessionText}>{sessionType === 'Focus' ? '🧠 FOCUS' : '☕ BREAK'}</Text>
+            <Text style={styles.timerText}>{formatTime(timeRemaining)}</Text>
+            <TouchableOpacity style={styles.button} onPress={() => setIsRunning(!isRunning)}>
+                <Text style={styles.buttonText}>{isRunning ? 'PAUSE' : 'START'}</Text>
+            </TouchableOpacity>
 
-                        {/* 👇 NEW SCAN BUTTON 👇 */}
-                        <TouchableOpacity 
-                            style={[styles.scanButton, {flex: 1}]} 
-                            onPress={pickAndAnalyzeImage} 
-                            disabled={isLoading} 
-                        >
-                            <Text style={styles.buttonText}>
-                                {isLoading ? '📸...' : '📷 SCAN'}
-                            </Text>
-                        </TouchableOpacity>
+            {/* INPUTS */}
+            <View style={styles.inputSection}>
+                <TextInput style={styles.inputBox} placeholder="Paste notes..." placeholderTextColor="#888" multiline value={noteText} onChangeText={setNoteText} />
+                <View style={{flexDirection: 'row', gap: 10, marginTop: 10}}>
+                    <TouchableOpacity style={[styles.analyzeButton, {flex: 1}]} onPress={analyzeNote} disabled={isLoading}>
+                        {isLoading ? <ActivityIndicator color="#FFF"/> : <Text style={styles.buttonText}>✨ ANALYZE</Text>}
+                    </TouchableOpacity>
+                    <TouchableOpacity style={[styles.scanButton, {flex: 1}]} onPress={pickImage} disabled={isLoading}>
+                        <Text style={styles.buttonText}>📷 SCAN</Text>
+                    </TouchableOpacity>
+                </View>
+            </View>
+
+            {/* AI OUTPUT */}
+            {aiSummary ? (
+                <View style={styles.summaryContainer}>
+                    <View style={{flexDirection:'row', justifyContent:'space-between'}}>
+                        <Text style={styles.summaryTitle}>✨ Summary:</Text>
+                        <TouchableOpacity onPress={speakSummary}><Text style={{fontSize:22}}>🗣️</Text></TouchableOpacity>
+                    </View>
+                    <Text style={styles.summaryText}>{aiSummary}</Text>
+                    <View style={{flexDirection:'row', flexWrap:'wrap', gap:5, marginTop:10}}>
+                        {aiKeywords.map((k,i)=><Text key={i} style={styles.tag}>#{k}</Text>)}
                     </View>
                 </View>
+            ) : null}
 
-                {/* QUIZ SECTION */}
-                {aiQuiz ? (
-                    <View style={styles.quizContainer}>
-                        <Text style={styles.quizTitle}>📝 Quick Quiz:</Text>
-                        <Text style={styles.questionText}>{aiQuiz.question}</Text>
-                        <View style={styles.optionsWrapper}>
-                            {aiQuiz.options.map((option, index) => (
-                                <TouchableOpacity 
-                                    key={index} 
-                                    style={styles.optionButton}
-                                    onPress={() => {
-                                        if (option === aiQuiz.answer) Alert.alert("✅ Correct!");
-                                        else Alert.alert(`❌ Wrong! Answer: ${aiQuiz.answer}`);
-                                    }}
-                                >
-                                    <Text style={styles.optionText}>{option}</Text>
-                                </TouchableOpacity>
-                            ))}
-                        </View>
-                    </View>
-                ) : null}
-
-                {/* SUMMARY SECTION */}
-                {aiSummary ? (
-                    <View style={styles.summaryContainer}>
-                        <Text style={styles.summaryTitle}>✨ AI Summary:</Text>
-                        <Text style={styles.summaryText}>{aiSummary}</Text>
-                        {aiKeywords.length > 0 && (
-                            <View style={styles.keywordsContainer}>
-                                <Text style={styles.keywordsLabel}>Keywords:</Text>
-                                <View style={styles.tagsWrapper}>
-                                    {aiKeywords.map((word, index) => (
-                                        <View key={index} style={styles.tag}>
-                                            <Text style={styles.tagText}>{word}</Text>
-                                        </View>
-                                    ))}
-                                </View>
-                            </View>
-                        )}
-                    </View>
-                ) : null}
-
-                {/* HISTORY SECTION */}
-                <View style={{width: '100%', marginTop: 40, borderTopWidth: 1, borderColor: '#444', paddingTop: 20}}>
-                    <TouchableOpacity style={styles.historyButton} onPress={fetchHistory}>
-                        <Text style={styles.buttonText}>{showHistory ? '🙈 HIDE HISTORY' : '📜 VIEW HISTORY'}</Text>
-                    </TouchableOpacity>
-
-                    {showHistory && historyList.map((item, index) => (
-                        <TouchableOpacity 
-                            key={index} 
-                            style={styles.historyCard}
-                            onPress={() => {
-                                setAiSummary(item.summary);
-                                setAiKeywords(item.keywords);
-                                setAiQuiz(item.quiz);
-                                Alert.alert("Loaded!", "Note active.");
-                                setShowHistory(false);
-                            }}
-                        >
-                            <View style={{flexDirection: 'row', justifyContent: 'space-between', marginBottom: 5}}>
-                                <Text style={styles.historyDate}>📅 {item.date.substring(0, 10)}</Text>
-                                <Text style={{color: '#FFD700', fontSize: 12, fontWeight: 'bold'}}>
-                                    ⏰ Review: {item.next_review ? item.next_review.substring(0, 10) : 'N/A'}
-                                </Text>
-                            </View>
-                            <Text style={styles.historySummary}>{item.content_snippet}</Text>
+            {/* QUIZ */}
+            {aiQuiz && (
+                <View style={styles.quizContainer}>
+                    <Text style={styles.quizTitle}>📝 Quiz</Text>
+                    <Text style={styles.questionText}>{aiQuiz.question}</Text>
+                    {aiQuiz.options.map((opt, i) => (
+                        <TouchableOpacity key={i} style={styles.optionButton} onPress={() => Alert.alert(opt === aiQuiz.answer ? "✅ Correct!" : "❌ Wrong")}>
+                            <Text style={styles.optionText}>{opt}</Text>
                         </TouchableOpacity>
                     ))}
                 </View>
-
-            </ScrollView>
-        </KeyboardAvoidingView>
+            )}
+        </ScrollView>
     );
 };
 
-export default PomodoroTimer;
+// --- 🚀 ROOT COMPONENT ---
+export default function App() {
+    const [user, setUser] = useState(null); // null = Logged Out
 
+    return (
+        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{flex: 1, backgroundColor: '#1E1E1E'}}>
+            {user ? (
+                <MainApp user={user} onLogout={() => setUser(null)} />
+            ) : (
+                <AuthScreen onLogin={(userData) => setUser(userData)} />
+            )}
+        </KeyboardAvoidingView>
+    );
+}
+
+// --- STYLES ---
 const styles = StyleSheet.create({
-    container: { flexGrow: 1, alignItems: 'center', backgroundColor: '#1E1E1E', paddingVertical: 40, paddingHorizontal: 20 },
-    timerText: { fontSize: 80, fontWeight: '900', marginVertical: 10, color: '#FFFFFF' },
-    sessionText: { fontSize: 24, fontWeight: '700', color: '#FFD700' },
-    button: { backgroundColor: '#4CAF50', paddingVertical: 12, paddingHorizontal: 30, borderRadius: 10, marginBottom: 30 },
-    buttonText: { color: 'white', fontSize: 18, fontWeight: 'bold', textAlign: 'center' },
+    container: { flexGrow: 1, alignItems: 'center', backgroundColor: '#1E1E1E', padding: 20, paddingTop: 50 },
+    authContainer: { flex: 1, justifyContent: 'center', padding: 20, backgroundColor: '#1E1E1E' },
+    authTitle: { fontSize: 36, fontWeight: 'bold', color: '#FFD700', textAlign: 'center', marginBottom: 10 },
+    authSubtitle: { fontSize: 18, color: '#BBB', textAlign: 'center', marginBottom: 40 },
+    authInput: { backgroundColor: '#333', color: '#FFF', borderRadius: 10, padding: 15, marginBottom: 15, fontSize: 16 },
+    authButton: { backgroundColor: '#FFD700', padding: 15, borderRadius: 10, alignItems: 'center', marginTop: 10 },
+    authButtonText: { color: '#000', fontWeight: 'bold', fontSize: 18 },
+    switchText: { color: '#2196F3', textAlign: 'center', marginTop: 10, fontSize: 16 },
     
-    inputSection: { width: '100%', marginTop: 10 },
-    sectionTitle: { color: '#FFF', fontSize: 18, fontWeight: '600', marginBottom: 10, marginLeft: 5 },
-    inputBox: { backgroundColor: '#2C2C2C', color: '#FFF', borderRadius: 10, padding: 15, fontSize: 16, borderWidth: 1, borderColor: '#444', minHeight: 100, textAlignVertical: 'top' },
-    
-    analyzeButton: { backgroundColor: '#2196F3', paddingVertical: 15, borderRadius: 10, marginTop: 15 },
-    scanButton: { backgroundColor: '#9C27B0', paddingVertical: 15, borderRadius: 10, marginTop: 15 }, // Purple button for scan
-
-    summaryContainer: { marginTop: 30, padding: 20, backgroundColor: '#333', borderRadius: 15, width: '100%', borderLeftWidth: 4, borderLeftColor: '#FFD700' },
-    summaryTitle: { color: '#FFD700', fontSize: 20, fontWeight: 'bold', marginBottom: 10 },
-    summaryText: { color: '#E0E0E0', fontSize: 16, lineHeight: 24 },
-    
-    keywordsContainer: { marginTop: 20, borderTopWidth: 1, borderTopColor: '#555', paddingTop: 15 },
-    keywordsLabel: { color: '#AAA', fontSize: 14, marginBottom: 10, fontStyle: 'italic' },
-    tagsWrapper: { flexDirection: 'row', flexWrap: 'wrap' },
-    tag: { backgroundColor: '#4CAF50', paddingVertical: 6, paddingHorizontal: 12, borderRadius: 20, marginRight: 8, marginBottom: 8 },
-    tagText: { color: '#FFF', fontWeight: 'bold', fontSize: 13 },
-
-    quizContainer: { marginTop: 20, padding: 20, backgroundColor: '#444', borderRadius: 15, width: '100%', borderLeftWidth: 4, borderLeftColor: '#2196F3' },
-    quizTitle: { color: '#2196F3', fontSize: 20, fontWeight: 'bold', marginBottom: 10 },
-    questionText: { color: '#FFF', fontSize: 18, fontStyle: 'italic', marginBottom: 15 },
-    optionsWrapper: { gap: 10 },
-    optionButton: { backgroundColor: '#555', padding: 12, borderRadius: 8 },
+    title: { fontSize: 24, fontWeight: 'bold', color: '#FFD700' },
+    timerText: { fontSize: 70, fontWeight: '900', color: '#FFF' },
+    sessionText: { fontSize: 20, color: '#AAA', marginBottom: 5 },
+    button: { backgroundColor: '#4CAF50', padding: 10, borderRadius: 8, width: '100%', alignItems: 'center', marginBottom: 20 },
+    buttonText: { color: 'white', fontWeight: 'bold' },
+    inputSection: { width: '100%' },
+    inputBox: { backgroundColor: '#2C2C2C', color: '#FFF', borderRadius: 10, padding: 15, minHeight: 80, textAlignVertical: 'top' },
+    analyzeButton: { backgroundColor: '#2196F3', padding: 15, borderRadius: 10, alignItems: 'center' },
+    scanButton: { backgroundColor: '#9C27B0', padding: 15, borderRadius: 10, alignItems: 'center' },
+    summaryContainer: { marginTop: 20, padding: 15, backgroundColor: '#333', borderRadius: 10, width: '100%', borderLeftWidth: 4, borderLeftColor: '#FFD700' },
+    summaryTitle: { color: '#FFD700', fontWeight: 'bold', fontSize: 18 },
+    summaryText: { color: '#DDD', lineHeight: 22, fontSize: 16 },
+    tag: { backgroundColor: '#555', color: '#FFF', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4, fontSize: 12 },
+    quizContainer: { marginTop: 20, padding: 15, backgroundColor: '#444', borderRadius: 10, width: '100%' },
+    quizTitle: { color: '#2196F3', fontWeight: 'bold', marginBottom: 10 },
+    questionText: { color: '#FFF', marginBottom: 15, fontStyle: 'italic' },
+    optionButton: { backgroundColor: '#555', padding: 12, borderRadius: 8, marginBottom: 8 },
     optionText: { color: '#FFF', textAlign: 'center', fontWeight: 'bold' },
-
-    historyButton: { backgroundColor: '#607D8B', paddingVertical: 12, borderRadius: 10, marginBottom: 20, width: '100%' },
-    historyCard: { backgroundColor: '#252525', padding: 15, borderRadius: 10, marginBottom: 10, borderLeftWidth: 3, borderLeftColor: '#AAA', width: '100%' },
-    historyDate: { color: '#888', fontSize: 12 },
-    historySummary: { color: '#DDD', fontSize: 14 },
 });

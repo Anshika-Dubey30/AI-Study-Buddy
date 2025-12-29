@@ -1,226 +1,191 @@
-# backend_api.py
-
 from flask import Flask, request, jsonify
-from datetime import datetime, timedelta
 from flask_cors import CORS
-import random
 import sqlite3
-import json
 import os
+# 👇 NEW: Security tools for passwords
+from werkzeug.security import generate_password_hash, check_password_hash
 
-# 👇 NEW IMPORTS FOR OCR (THE EYES)
-import pytesseract
-from PIL import Image
-
-# --- NLP IMPORTS ---
-import nltk
-from nltk.corpus import stopwords
-from nltk.tokenize import word_tokenize, sent_tokenize
-from collections import Counter
-import string
+# AI Libraries
 from sumy.parsers.plaintext import PlaintextParser
 from sumy.nlp.tokenizers import Tokenizer
 from sumy.summarizers.text_rank import TextRankSummarizer
+import nltk
+from pytesseract import image_to_string
+from PIL import Image
+
+# Download NLTK data (only runs once)
+nltk.download('punkt')
+nltk.download('punkt_tab')
 
 app = Flask(__name__)
-CORS(app) 
-app.config['JSON_SORT_KEYS'] = False 
+CORS(app)
 
-# 👇 CRITICAL: TELL PYTHON WHERE TESSERACT IS
-# Make sure this path is correct for YOUR computer!
-pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
-
-# --- 1. DATABASE SETUP ---
+# --- 🗄️ DATABASE SETUP ---
 def init_db():
     conn = sqlite3.connect('studybuddy.db')
     c = conn.cursor()
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS notes (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            content TEXT,
-            summary TEXT,
-            keywords TEXT,
-            quiz_data TEXT,
-            created_at TEXT,
-            next_review_date TEXT
-        )
-    ''')
+    
+    # 1. Create Notes Table (Existing)
+    c.execute('''CREATE TABLE IF NOT EXISTS notes
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  content TEXT,
+                  summary TEXT,
+                  keywords TEXT,
+                  date TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+    
+    # 2. 👇 NEW: Create Users Table
+    c.execute('''CREATE TABLE IF NOT EXISTS users
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  username TEXT UNIQUE NOT NULL,
+                  password TEXT NOT NULL)''')
+                  
     conn.commit()
     conn.close()
 
 init_db()
 
-# --- 2. AI FUNCTIONS (Helpers) ---
-def summarize_text_with_ai(raw_text, sentence_count=3):
-    try:
-        parser = PlaintextParser.from_string(raw_text, Tokenizer("english"))
-        summarizer = TextRankSummarizer()
-        summary_sentences = summarizer(parser.document, sentence_count)
-        final_summary = " ".join([str(s) for s in summary_sentences])
-        return final_summary if final_summary else "Text too short."
-    except:
-        return "Could not generate summary."
+# --- 🔐 NEW: AUTH ROUTES ---
 
-def extract_keywords(text, num_keywords=5):
-    try:
-        words = word_tokenize(text.lower())
-        stop_words = set(stopwords.words('english'))
-        punctuation = set(string.punctuation)
-        filtered_words = [w for w in words if w not in stop_words and w not in punctuation and w.isalnum()]
-        word_counts = Counter(filtered_words)
-        return [w[0].capitalize() for w in word_counts.most_common(num_keywords)]
-    except:
-        return []
+@app.route('/auth/register', methods=['POST'])
+def register():
+    data = request.json
+    username = data.get('username')
+    password = data.get('password')
 
-def generate_quiz(text, keywords):
-    try:
-        sentences = sent_tokenize(text)
-        target_sentence = ""
-        correct_answer = ""
-        for keyword in keywords:
-            for sentence in sentences:
-                if keyword.lower() in sentence.lower() and 10 < len(sentence) < 200:
-                    target_sentence = sentence
-                    correct_answer = keyword
-                    break
-            if target_sentence: break
-        
-        if not target_sentence: return None
+    if not username or not password:
+        return jsonify({"error": "Missing fields"}), 400
 
-        import re
-        question_text = re.sub(re.escape(correct_answer), "_______", target_sentence, flags=re.IGNORECASE)
-        options = [correct_answer]
-        for k in keywords:
-            if k.lower() != correct_answer.lower() and k not in options:
-                options.append(k)
-        options = options[:4]
-        random.shuffle(options)
-        return {"question": question_text, "options": options, "answer": correct_answer}
-    except:
-        return None
+    # Scramble the password for security
+    hashed_pw = generate_password_hash(password)
 
-# --- HELPER: SAVE TO DB ---
-def save_note_to_db(raw_text, ai_summary, ai_keywords, ai_quiz):
-    review_date = (datetime.now() + timedelta(days=1)).isoformat()
-    created_at = datetime.now().isoformat()
-    
-    conn = sqlite3.connect('studybuddy.db')
-    c = conn.cursor()
-    c.execute('''
-        INSERT INTO notes (content, summary, keywords, quiz_data, created_at, next_review_date)
-        VALUES (?, ?, ?, ?, ?, ?)
-    ''', (raw_text, ai_summary, json.dumps(ai_keywords), json.dumps(ai_quiz), created_at, review_date))
-    new_id = c.lastrowid
-    conn.commit()
-    conn.close()
-    return new_id
-
-# --- 3. ENDPOINTS ---
-
-@app.route('/notes/upload', methods=['POST'])
-def upload_note():
-    if not request.is_json: return jsonify({"status": "error"}), 400
-    data = request.get_json()
-    raw_text = data.get('content', '').strip()
-    
-    if not raw_text: return jsonify({"status": "error"}), 400
-
-    ai_summary = summarize_text_with_ai(raw_text)
-    ai_keywords = extract_keywords(raw_text)
-    ai_quiz = generate_quiz(raw_text, ai_keywords)
-    new_id = save_note_to_db(raw_text, ai_summary, ai_keywords, ai_quiz)
-
-    return jsonify({
-        "status": "success",
-        "note_id": new_id,
-        "summary": ai_summary,
-        "keywords": ai_keywords,
-        "quiz": ai_quiz
-    }), 201
-
-# 👇 UPDATED ENDPOINT: IMAGE UPLOAD WITH DEBUGGING 👇
-@app.route('/notes/upload-image', methods=['POST'])
-def upload_image_note():
-    print("📸 DEBUG: Receiving Image Request...") 
-    
-    # Check 1: Is the file there?
-    if 'file' not in request.files:
-        print("❌ DEBUG Error: No 'file' key in request.files") 
-        return jsonify({"error": "No file uploaded"}), 400
-    
-    file = request.files['file']
-    print(f"📂 DEBUG: File received: {file.filename}") 
-
-    # Check 2: Does it have a name?
-    if file.filename == '':
-        print("❌ DEBUG Error: Empty filename") 
-        return jsonify({"error": "No file selected"}), 400
-
-    try:
-        # Check 3: Can Tesseract read it?
-        image = Image.open(file)
-        print("🖼️ DEBUG: Image opened successfully via Pillow") 
-        
-        extracted_text = pytesseract.image_to_string(image)
-        # Show the first 50 characters found
-        print(f"📝 DEBUG: Raw Text Found (First 50 chars): '{extracted_text[:50]}...'") 
-        
-        if not extracted_text.strip():
-            print("❌ DEBUG Error: Tesseract returned empty text. Image might be blank or blurry.") 
-            return jsonify({"error": "No text found in image"}), 400
-
-        print("✅ DEBUG: Text found! Processing AI...") 
-
-        # 4. Run the AI Pipeline
-        ai_summary = summarize_text_with_ai(extracted_text)
-        ai_keywords = extract_keywords(extracted_text)
-        ai_quiz = generate_quiz(extracted_text, ai_keywords)
-        
-        new_id = save_note_to_db(extracted_text, ai_summary, ai_keywords, ai_quiz)
-
-        return jsonify({
-            "status": "success",
-            "message": "Image processed successfully!",
-            "note_id": new_id,
-            "original_text": extracted_text,
-            "summary": ai_summary,
-            "keywords": ai_keywords,
-            "quiz": ai_quiz
-        }), 201
-
-    except Exception as e:
-        print(f"🔥 DEBUG: OCR Crash Error: {e}") 
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/notes/history', methods=['GET'])
-def get_history():
     try:
         conn = sqlite3.connect('studybuddy.db')
         c = conn.cursor()
-        c.execute("SELECT id, content, summary, keywords, quiz_data, created_at, next_review_date FROM notes ORDER BY id DESC LIMIT 10")
-        rows = c.fetchall()
-        history_list = []
-        for row in rows:
-            history_list.append({
-                "id": row[0],
-                "content_snippet": row[1][:50] + "...",
-                "summary": row[2],
-                "keywords": json.loads(row[3]) if row[3] else [],
-                "quiz": json.loads(row[4]) if row[4] else None,
-                "date": row[5],
-                "next_review": row[6]
-            })
+        c.execute("INSERT INTO users (username, password) VALUES (?, ?)", (username, hashed_pw))
+        conn.commit()
         conn.close()
-        return jsonify(history_list), 200
-    except:
-        return jsonify({"status": "error"}), 500
+        return jsonify({"message": "User created!"}), 201
+    except sqlite3.IntegrityError:
+        return jsonify({"error": "Username already exists"}), 409
+
+@app.route('/auth/login', methods=['POST'])
+def login():
+    data = request.json
+    username = data.get('username')
+    password = data.get('password')
+
+    conn = sqlite3.connect('studybuddy.db')
+    c = conn.cursor()
+    c.execute("SELECT * FROM users WHERE username=?", (username,))
+    user = c.fetchone()
+    conn.close()
+
+    # Check if user exists AND if password matches
+    if user and check_password_hash(user[2], password):
+        return jsonify({"message": "Login successful", "user_id": user[0], "username": user[1]}), 200
+    else:
+        return jsonify({"error": "Invalid credentials"}), 401
+
+# --- 🧠 EXISTING AI ROUTES ---
+
+@app.route('/notes/upload', methods=['POST'])
+def upload_note():
+    data = request.json
+    text = data.get('content', '')
+
+    if not text:
+        return jsonify({"error": "No text provided"}), 400
+
+    # 1. Summarize
+    parser = PlaintextParser.from_string(text, Tokenizer("english"))
+    summarizer = TextRankSummarizer()
+    summary_sentences = summarizer(parser.document, 3) 
+    summary = " ".join([str(s) for s in summary_sentences])
+
+    # 2. Extract Keywords (Simple method)
+    words = nltk.word_tokenize(text)
+    keywords = [w for w in set(words) if len(w) > 6][:5]
+
+    # 3. Generate Quiz
+    sentences = nltk.sent_tokenize(text)
+    quiz = None
+    if len(sentences) > 0:
+        question_sentence = sentences[0]
+        words = nltk.word_tokenize(question_sentence)
+        if len(words) > 3:
+            answer = words[-1] # Simple logic: take the last word
+            options = [answer, "Python", "React", "Data"]
+            quiz = {"question": question_sentence.replace(answer, "______"), "answer": answer, "options": options}
+
+    # Save to DB
+    conn = sqlite3.connect('studybuddy.db')
+    c = conn.cursor()
+    c.execute("INSERT INTO notes (content, summary, keywords) VALUES (?, ?, ?)", 
+              (text, summary, str(keywords)))
+    conn.commit()
+    conn.close()
+
+    return jsonify({
+        "summary": summary,
+        "keywords": keywords,
+        "quiz": quiz
+    })
+
+@app.route('/notes/history', methods=['GET'])
+def get_history():
+    conn = sqlite3.connect('studybuddy.db')
+    c = conn.cursor()
+    c.execute("SELECT * FROM notes ORDER BY date DESC")
+    rows = c.fetchall()
+    conn.close()
+
+    history = []
+    for row in rows:
+        history.append({
+            "id": row[0],
+            "content_snippet": row[1][:50] + "...",
+            "summary": row[2],
+            "keywords": eval(row[3]), 
+            "date": row[4]
+        })
+    
+    return jsonify(history)
+
+@app.route('/notes/upload-image', methods=['POST'])
+def upload_image():
+    if 'file' not in request.files:
+        return jsonify({"error": "No file part"}), 400
+    
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({"error": "No selected file"}), 400
+
+    image = Image.open(file.stream)
+    
+    # 1. OCR (Image to Text)
+    # ⚠️ Windows Users: Need tesseract.exe installed and path set
+    try:
+        # pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+        text = image_to_string(image)
+    except Exception as e:
+        return jsonify({"error": f"OCR Failed: {str(e)}"}), 500
+
+    # 2. Reuse the logic (Call the internal function logic)
+    # Ideally refactor, but for now we copy-paste the summary logic
+    parser = PlaintextParser.from_string(text, Tokenizer("english"))
+    summarizer = TextRankSummarizer()
+    summary_sentences = summarizer(parser.document, 3) 
+    summary = " ".join([str(s) for s in summary_sentences])
+    
+    keywords = [w for w in set(nltk.word_tokenize(text)) if len(w) > 6][:5]
+
+    return jsonify({
+        "original_text": text,
+        "summary": summary,
+        "keywords": keywords,
+        "quiz": None 
+    })
 
 if __name__ == '__main__':
-    # Initial download check
-    try:
-        nltk.data.find('tokenizers/punkt')
-    except LookupError:
-        nltk.download('punkt')
-        nltk.download('stopwords')
-        
-    app.run(debug=True, port=5000)
+    # ✅ Keeping the fix that lets your phone connect
+    app.run(debug=True, port=5000, host='0.0.0.0')
