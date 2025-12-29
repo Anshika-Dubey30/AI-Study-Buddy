@@ -11,6 +11,7 @@ from sumy.parsers.plaintext import PlaintextParser
 from sumy.nlp.tokenizers import Tokenizer
 from sumy.summarizers.text_rank import TextRankSummarizer
 import nltk
+import pytesseract
 from pytesseract import image_to_string
 from PIL import Image
 
