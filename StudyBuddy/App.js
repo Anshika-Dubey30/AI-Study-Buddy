@@ -5,7 +5,7 @@ import * as ImagePicker from 'expo-image-picker';
 import * as Speech from 'expo-speech';
 
 // ⚠️ CHECK YOUR IP!
-const BASE_URL = 'http://10.112.73.9:5000'; 
+const BASE_URL = 'http://10.24.183.144:5000'; 
 
 // --- 🔐 AUTH COMPONENT (Login/Signup) ---
 const AuthScreen = ({ onLogin }) => {
