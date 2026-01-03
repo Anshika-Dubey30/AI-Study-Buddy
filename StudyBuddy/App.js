@@ -3,10 +3,9 @@ import { View, Text, TouchableOpacity, StyleSheet, ScrollView, TextInput, Alert,
 import axios from 'axios';
 import * as ImagePicker from 'expo-image-picker';
 import * as Speech from 'expo-speech';
-import { BASE_URL } from './api';
 
 // ⚠️ CHECK YOUR IP!
-// const BASE_URL = 'http://10.24.183.144:5000'; 
+const BASE_URL = 'http://10.112.73.9:5000'; 
 
 // --- 🔐 AUTH COMPONENT (Login/Signup) ---
 const AuthScreen = ({ onLogin }) => {
@@ -75,11 +74,12 @@ const MainApp = ({ user, onLogout }) => {
     const [aiSummary, setAiSummary] = useState(''); 
     const [aiKeywords, setAiKeywords] = useState([]); 
     const [aiQuiz, setAiQuiz] = useState(null);
+    // 👇 NEW STATE FOR FLASHCARDS
+    const [aiFlashcards, setAiFlashcards] = useState([]); 
+    const [flippedCardIndex, setFlippedCardIndex] = useState(null);
+
     const [isLoading, setIsLoading] = useState(false);
     
-    const [historyList, setHistoryList] = useState([]);
-    const [showHistory, setShowHistory] = useState(false);
-
     // HELPER FUNCTIONS
     const formatTime = (seconds) => {
         const m = Math.floor(seconds / 60);
@@ -102,6 +102,7 @@ const MainApp = ({ user, onLogout }) => {
             setAiSummary(res.data.summary); 
             setAiKeywords(res.data.keywords); 
             setAiQuiz(res.data.quiz);
+            setAiFlashcards(res.data.flashcards); // 👈 Capture Flashcards
         } catch (err) { Alert.alert("Error", "Analysis failed."); }
         finally { setIsLoading(false); }
     };
@@ -135,6 +136,7 @@ const MainApp = ({ user, onLogout }) => {
                 setAiSummary(response.data.summary);
                 setAiKeywords(response.data.keywords);
                 setAiQuiz(response.data.quiz);
+                setAiFlashcards(response.data.flashcards); // 👈 Capture Flashcards
             } catch (err) { setNoteText("Error"); Alert.alert("Scan Failed"); }
             finally { setIsLoading(false); }
         }
@@ -147,12 +149,20 @@ const MainApp = ({ user, onLogout }) => {
         return () => clearInterval(interval);
     }, [isRunning, timeRemaining]);
 
+    const getGreeting = () => {
+        const hour = new Date().getHours();
+        if (hour < 5) return "Up Late, Genius?";
+        if (hour < 12) return "Good Morning";
+        if (hour < 18) return "Good Afternoon";
+        return "Good Evening";
+    };
+
     return (
         <ScrollView contentContainerStyle={styles.container}>
             <View style={{flexDirection:'row', justifyContent:'space-between', width:'100%', alignItems:'center', marginBottom: 20}}>
-                <Text style={styles.title}>Welcome, {user.username} 👋</Text>
-                <TouchableOpacity onPress={onLogout} style={{backgroundColor:'#FF4444', padding:8, borderRadius:5}}>
-                    <Text style={{color:'white', fontWeight:'bold'}}>LOGOUT</Text>
+                <Text style={styles.title}>{getGreeting()}, {user.username}</Text>
+                <TouchableOpacity onPress={onLogout} style={{backgroundColor:'#94B4C1', padding:8, borderRadius:5}}>
+                    <Text style={{color:'black', fontWeight:'bold'}}>LOGOUT</Text>
                 </TouchableOpacity>
             </View>
 
@@ -190,6 +200,29 @@ const MainApp = ({ user, onLogout }) => {
                 </View>
             ) : null}
 
+            {/* 🗂️ FLASHCARDS SECTION (New) */}
+            {aiFlashcards.length > 0 && (
+                <View style={styles.flashcardsContainer}>
+                    <Text style={styles.quizTitle}>Flashcards:</Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.flashcardsScroll}>
+                        {aiFlashcards.map((card, index) => (
+                            <TouchableOpacity 
+                                key={index} 
+                                style={[styles.flashcard, flippedCardIndex === index ? styles.flashcardBack : null]}
+                                onPress={() => setFlippedCardIndex(flippedCardIndex === index ? null : index)}
+                            >
+                                <Text style={flippedCardIndex === index ? styles.flashcardTextBack : styles.flashcardTextFront}>
+                                    {flippedCardIndex === index ? card.back : card.front}
+                                </Text>
+                                <Text style={styles.flipHint}>
+                                    {flippedCardIndex === index ? "Tap to see term" : "Tap to flip"}
+                                </Text>
+                            </TouchableOpacity>
+                        ))}
+                    </ScrollView>
+                </View>
+            )}
+
             {/* QUIZ */}
             {aiQuiz && (
                 <View style={styles.quizContainer}>
@@ -211,7 +244,7 @@ export default function App() {
     const [user, setUser] = useState(null); // null = Logged Out
 
     return (
-        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{flex: 1, backgroundColor: '#1E1E1E'}}>
+        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{flex: 1, backgroundColor: '#213448'}}>
             {user ? (
                 <MainApp user={user} onLogout={() => setUser(null)} />
             ) : (
@@ -223,31 +256,68 @@ export default function App() {
 
 // --- STYLES ---
 const styles = StyleSheet.create({
-    container: { flexGrow: 1, alignItems: 'center', backgroundColor: '#1E1E1E', padding: 20, paddingTop: 50 },
-    authContainer: { flex: 1, justifyContent: 'center', padding: 20, backgroundColor: '#1E1E1E' },
-    authTitle: { fontSize: 36, fontWeight: 'bold', color: '#FFD700', textAlign: 'center', marginBottom: 10 },
-    authSubtitle: { fontSize: 18, color: '#BBB', textAlign: 'center', marginBottom: 40 },
-    authInput: { backgroundColor: '#333', color: '#FFF', borderRadius: 10, padding: 15, marginBottom: 15, fontSize: 16 },
-    authButton: { backgroundColor: '#FFD700', padding: 15, borderRadius: 10, alignItems: 'center', marginTop: 10 },
-    authButtonText: { color: '#000', fontWeight: 'bold', fontSize: 18 },
+    container: { flexGrow: 1, alignItems: 'center', backgroundColor: '#213448', padding: 20, paddingTop: 50 },
+    authContainer: { flex: 1, justifyContent: 'center', padding: 20, backgroundColor: '#0F2854' },
+    authTitle: { fontSize: 36, fontWeight: 'bold', color: '#FFE2AF', textAlign: 'center', marginBottom: 10 },
+    authSubtitle: { fontSize: 18, color: '#FFE2AF', textAlign: 'center', marginBottom: 40 },
+    authInput: { backgroundColor: '#4988C4', color: '#FFF', borderRadius: 10, padding: 15, marginBottom: 15, fontSize: 16 },
+    authButton: { backgroundColor: '#BDE8F5', padding: 15, borderRadius: 10, alignItems: 'center', marginTop: 10 },
+    authButtonText: { color: 'black', fontWeight: 'bold', fontSize: 18 },
     switchText: { color: '#2196F3', textAlign: 'center', marginTop: 10, fontSize: 16 },
     
-    title: { fontSize: 24, fontWeight: 'bold', color: '#FFD700' },
-    timerText: { fontSize: 70, fontWeight: '900', color: '#FFF' },
-    sessionText: { fontSize: 20, color: '#AAA', marginBottom: 5 },
-    button: { backgroundColor: '#4CAF50', padding: 10, borderRadius: 8, width: '100%', alignItems: 'center', marginBottom: 20 },
-    buttonText: { color: 'white', fontWeight: 'bold' },
+    title: { fontSize: 24, fontWeight: 'bold', color: '#FFE2AF' },
+    timerText: { fontSize: 70, fontWeight: '900', color: '#FFE2AF' },
+    sessionText: { fontSize: 20, color: '#FFE2AF', marginBottom: 5 },
+    button: { backgroundColor: '#94B4C1', padding: 10, borderRadius: 8, width: '100%', alignItems: 'center', marginBottom: 20 },
+    buttonText: { color: 'black', fontWeight: 'bold' },
     inputSection: { width: '100%' },
-    inputBox: { backgroundColor: '#2C2C2C', color: '#FFF', borderRadius: 10, padding: 15, minHeight: 80, textAlignVertical: 'top' },
-    analyzeButton: { backgroundColor: '#2196F3', padding: 15, borderRadius: 10, alignItems: 'center' },
-    scanButton: { backgroundColor: '#9C27B0', padding: 15, borderRadius: 10, alignItems: 'center' },
-    summaryContainer: { marginTop: 20, padding: 15, backgroundColor: '#333', borderRadius: 10, width: '100%', borderLeftWidth: 4, borderLeftColor: '#FFD700' },
-    summaryTitle: { color: '#FFD700', fontWeight: 'bold', fontSize: 18 },
-    summaryText: { color: '#DDD', lineHeight: 22, fontSize: 16 },
-    tag: { backgroundColor: '#555', color: '#FFF', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4, fontSize: 12 },
-    quizContainer: { marginTop: 20, padding: 15, backgroundColor: '#444', borderRadius: 10, width: '100%' },
-    quizTitle: { color: '#2196F3', fontWeight: 'bold', marginBottom: 10 },
+    inputBox: { backgroundColor: '#547792', color: '#FFF', borderRadius: 10, padding: 15, minHeight: 80, textAlignVertical: 'top' },
+    analyzeButton: { backgroundColor: '#94B4C1', padding: 15, borderRadius: 10, alignItems: 'center' },
+    scanButton: { backgroundColor: '#94B4C1', padding: 15, borderRadius: 10, alignItems: 'center' },
+    summaryContainer: { marginTop: 20, padding: 15, backgroundColor: '#547792', borderRadius: 10, width: '100%', borderLeftWidth: 4, borderLeftColor: '#FFD700' },
+    summaryTitle: { color: 'white', fontWeight: 'bold', fontSize: 18 },
+    summaryText: { color: 'white', lineHeight: 22, fontSize: 16 },
+    tag: { backgroundColor: '#EAE0CF', color: '#213448', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4, fontSize: 12 },
+    quizContainer: { marginTop: 20, padding: 15, backgroundColor: '#1C4D8D', borderRadius: 10, width: '100%' },
+    quizTitle: { color: '#BDE8F5', fontWeight: 'bold', marginBottom: 10 },
     questionText: { color: '#FFF', marginBottom: 15, fontStyle: 'italic' },
-    optionButton: { backgroundColor: '#555', padding: 12, borderRadius: 8, marginBottom: 8 },
+    optionButton: { backgroundColor: '#4988C4', padding: 12, borderRadius: 8, marginBottom: 8 },
     optionText: { color: '#FFF', textAlign: 'center', fontWeight: 'bold' },
+
+
+    flashcardsContainer: { marginTop: 20, width: '100%' },
+    flashcardsScroll: { paddingRight: 20 },
+    flashcard: {
+        backgroundColor: '#FFE2AF',
+        width: 200,
+        height: 150,
+        padding: 15,
+        borderRadius: 15,
+        marginRight: 15,
+        justifyContent: 'center',
+        alignItems: 'center',
+        elevation: 3, 
+    },
+    flashcardBack: {
+        backgroundColor: '#4988C4', // Blue (Back)
+    },
+    flashcardTextFront: {
+        color: '#213448', // Dark text on light card
+        fontSize: 18,
+        fontWeight: 'bold',
+        textAlign: 'center',
+        marginBottom: 10,
+    },
+    flashcardTextBack: {
+        color: '#FFF', // White text on blue card
+        fontSize: 14,
+        fontWeight: 'bold',
+        textAlign: 'center',
+        marginBottom: 10,
+    },
+    flipHint: {
+        color: 'rgba(0,0,0,0.4)',
+        fontSize: 10,
+        marginTop: 5
+    },
 });
