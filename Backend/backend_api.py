@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import sqlite3
 import os
+import platform
 # 👇 NEW: Security tools for passwords
 from werkzeug.security import generate_password_hash, check_password_hash
 
@@ -10,17 +11,29 @@ from sumy.parsers.plaintext import PlaintextParser
 from sumy.nlp.tokenizers import Tokenizer
 from sumy.summarizers.text_rank import TextRankSummarizer
 import nltk
+import pytesseract
 from pytesseract import image_to_string
 from PIL import Image
 
+if platform.system() == "Windows":
+    pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 # Download NLTK data (only runs once)
 nltk.download('punkt')
 nltk.download('punkt_tab')
+nltk.download('stopwords')
+nltk.download('wordnet')
+nltk.download('averaged_perceptron_tagger')
 
 app = Flask(__name__)
-CORS(app)
 
-# --- 🗄️ DATABASE SETUP ---
+# 👇 REPLACE THIS SECTION COMPLETELY 👇
+# The "Bulletproof" CORS setup
+CORS(app, resources={r"/*": {
+    "origins": "*", 
+    "methods": ["GET", "POST", "OPTIONS"],
+    "allow_headers": ["Content-Type", "Authorization"]
+}})
+# 👆 ------------------------------- 👆# --- 🗄️ DATABASE SETUP ---
 def init_db():
     conn = sqlite3.connect('studybuddy.db')
     c = conn.cursor()
@@ -55,19 +68,18 @@ def register():
     if not username or not password:
         return jsonify({"error": "Missing fields"}), 400
 
-    # Scramble the password for security
-    hashed_pw = generate_password_hash(password)
-
+    # 🛑 DELETED HASHING LINE
+    # Just save the password exactly as typed
     try:
         conn = sqlite3.connect('studybuddy.db')
         c = conn.cursor()
-        c.execute("INSERT INTO users (username, password) VALUES (?, ?)", (username, hashed_pw))
+        c.execute("INSERT INTO users (username, password) VALUES (?, ?)", (username, password))
         conn.commit()
         conn.close()
         return jsonify({"message": "User created!"}), 201
     except sqlite3.IntegrityError:
         return jsonify({"error": "Username already exists"}), 409
-
+    
 @app.route('/auth/login', methods=['POST'])
 def login():
     data = request.json
@@ -80,12 +92,13 @@ def login():
     user = c.fetchone()
     conn.close()
 
-    # Check if user exists AND if password matches
-    if user and check_password_hash(user[2], password):
+    # 🛑 CHANGED CHECK: Direct string comparison
+    # user[2] is the password column in the DB
+    if user and user[2] == password:
         return jsonify({"message": "Login successful", "user_id": user[0], "username": user[1]}), 200
     else:
         return jsonify({"error": "Invalid credentials"}), 401
-
+    
 # --- 🧠 EXISTING AI ROUTES ---
 
 @app.route('/notes/upload', methods=['POST'])
