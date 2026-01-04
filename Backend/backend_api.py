@@ -5,6 +5,7 @@ import os
 import platform
 import json 
 from datetime import datetime, timedelta
+from deep_translator import GoogleTranslator
 
 # AI Libraries
 from sumy.parsers.plaintext import PlaintextParser
@@ -283,6 +284,23 @@ def update_schedule():
     conn.close()
 
     return jsonify({"message": f"Rescheduled for {days_to_add} days later!"})
+
+
+    # --- 🌍 NEW: TRANSLATION ROUTE ---
+@app.route('/notes/translate', methods=['POST'])
+def translate_text():
+    data = request.json
+    text = data.get('text')
+    target_lang = data.get('lang', 'hi') # Default to Hindi ('hi')
+
+    if not text: return jsonify({"error": "No text provided"}), 400
+
+    try:
+        # Translate to Hindi (or any target language)
+        translated = GoogleTranslator(source='auto', target=target_lang).translate(text)
+        return jsonify({"translated_text": translated})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000, host='0.0.0.0')

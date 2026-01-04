@@ -80,6 +80,7 @@ const MainApp = ({ user, onLogout }) => {
 
     const [isLoading, setIsLoading] = useState(false);
     const [schedule, setSchedule] = useState([]);
+    const [translatedSummary, setTranslatedSummary] = useState('');
     
     // HELPER FUNCTIONS
     const formatTime = (seconds) => {
@@ -181,6 +182,22 @@ const MainApp = ({ user, onLogout }) => {
         } catch (err) { Alert.alert("Error updating"); }
     };
 
+    const handleTranslate = async () => {
+        if (!aiSummary) return;
+        setIsLoading(true);
+        try {
+            const res = await axios.post(`${BASE_URL}/notes/translate`, {
+                text: aiSummary,
+                lang: 'hi' // 'hi' = Hindi. You can change to 'fr' (French), 'es' (Spanish), etc.
+            });
+            setTranslatedSummary(res.data.translated_text);
+        } catch (err) {
+            Alert.alert("Error", "Translation failed.");
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
     return (
         <ScrollView contentContainerStyle={styles.container}>
             <View style={{flexDirection:'row', justifyContent:'space-between', width:'100%', alignItems:'center', marginBottom: 20}}>
@@ -242,11 +259,30 @@ const MainApp = ({ user, onLogout }) => {
             {/* AI OUTPUT */}
             {aiSummary ? (
                 <View style={styles.summaryContainer}>
-                    <View style={{flexDirection:'row', justifyContent:'space-between'}}>
-                        <Text style={styles.summaryTitle}>Summary:</Text>
-                        <TouchableOpacity onPress={speakSummary}><Text style={{fontSize:22}}>🗣️</Text></TouchableOpacity>
+                    <View style={{flexDirection:'row', justifyContent:'space-between', alignItems:'center'}}>
+                        <Text style={styles.summaryTitle}>✨ Summary:</Text>
+                        <View style={{flexDirection:'row', gap:10}}>
+                            {/* Speak Button */}
+                            <TouchableOpacity onPress={speakSummary}><Text style={{fontSize:22}}>🗣️</Text></TouchableOpacity>
+                            {/* Translate Button */}
+                            <TouchableOpacity onPress={handleTranslate}>
+                                <Text style={{fontSize:22}}>🇮🇳</Text>
+                            </TouchableOpacity>
+                        </View>
                     </View>
-                    <Text style={styles.summaryText}>{aiSummary}</Text>
+                    
+                    {/* Show Hindi if it exists, otherwise show English */}
+                    <Text style={styles.summaryText}>
+                        {translatedSummary ? translatedSummary : aiSummary}
+                    </Text>
+
+                    {/* Reset Button (Only shows if translated) */}
+                    {translatedSummary ? (
+                        <TouchableOpacity onPress={() => setTranslatedSummary('')} style={{marginTop:10}}>
+                            <Text style={{color:'#FFD700', fontWeight:'bold'}}>↩️ Show Original English</Text>
+                        </TouchableOpacity>
+                    ) : null}
+
                     <View style={{flexDirection:'row', flexWrap:'wrap', gap:5, marginTop:10}}>
                         {aiKeywords.map((k,i)=><Text key={i} style={styles.tag}>#{k}</Text>)}
                     </View>
