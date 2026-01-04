@@ -40,7 +40,7 @@ const AuthScreen = ({ onLogin }) => {
 
     return (
         <View style={styles.authContainer}>
-            <Text style={styles.authTitle}>🧠 StudyBuddy</Text>
+            <Text style={styles.authTitle}>StudyBuddy</Text>
             <Text style={styles.authSubtitle}>{isLogin ? 'Welcome Back, Genius.' : 'Join the Squad.'}</Text>
 
             <TextInput style={styles.authInput} placeholder="Username" placeholderTextColor="#888" value={username} onChangeText={setUsername} autoCapitalize="none" />
@@ -79,6 +79,7 @@ const MainApp = ({ user, onLogout }) => {
     const [flippedCardIndex, setFlippedCardIndex] = useState(null);
 
     const [isLoading, setIsLoading] = useState(false);
+    const [schedule, setSchedule] = useState([]);
     
     // HELPER FUNCTIONS
     const formatTime = (seconds) => {
@@ -157,6 +158,29 @@ const MainApp = ({ user, onLogout }) => {
         return "Good Evening";
     };
 
+    const fetchSchedule = async () => {
+        try {
+            const res = await axios.get(`${BASE_URL}/schedule/due`);
+            setSchedule(res.data);
+        } catch (err) { console.log("Schedule Error", err); }
+    };
+
+    // Load schedule when app starts
+    useEffect(() => {
+        if (user) fetchSchedule();
+    }, [user]);
+
+    const handleReviewComplete = async (noteId, isEasy) => {
+        try {
+            await axios.post(`${BASE_URL}/schedule/update`, {
+                note_id: noteId,
+                performance: isEasy ? 'easy' : 'hard'
+            });
+            Alert.alert(isEasy ? "Nice! 🚀" : "Got it. We'll review this tomorrow. 🧠");
+            fetchSchedule(); // Refresh list
+        } catch (err) { Alert.alert("Error updating"); }
+    };
+
     return (
         <ScrollView contentContainerStyle={styles.container}>
             <View style={{flexDirection:'row', justifyContent:'space-between', width:'100%', alignItems:'center', marginBottom: 20}}>
@@ -166,8 +190,37 @@ const MainApp = ({ user, onLogout }) => {
                 </TouchableOpacity>
             </View>
 
+            {/* 📅 SMART SCHEDULE DASHBOARD */}
+            {schedule.length > 0 && (
+                <View style={styles.scheduleContainer}>
+                    <Text style={styles.sectionTitle}>📅 Due for Review ({schedule.length})</Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                        {schedule.map((item, index) => (
+                            <View key={index} style={styles.scheduleCard}>
+                                <Text style={styles.scheduleTopic}>{item.topic}</Text>
+                                <Text style={styles.scheduleSub}>Tap to Review</Text>
+                                <View style={{flexDirection:'row', gap:5, marginTop:10}}>
+                                    <TouchableOpacity 
+                                        style={[styles.smallBtn, {backgroundColor:'#FF4444'}]}
+                                        onPress={() => handleReviewComplete(item.id, false)}
+                                    >
+                                        <Text style={{color:'white'}}>Hard 😓</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity 
+                                        style={[styles.smallBtn, {backgroundColor:'#4CAF50'}]}
+                                        onPress={() => handleReviewComplete(item.id, true)}
+                                    >
+                                        <Text style={{color:'white'}}>Easy 😎</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            </View>
+                        ))}
+                    </ScrollView>
+                </View>
+            )}
+
             {/* TIMER */}
-            <Text style={styles.sessionText}>{sessionType === 'Focus' ? '🧠 FOCUS' : '☕ BREAK'}</Text>
+            <Text style={styles.sessionText}>{sessionType === 'Focus' ? 'FOCUS' : 'BREAK'}</Text>
             <Text style={styles.timerText}>{formatTime(timeRemaining)}</Text>
             <TouchableOpacity style={styles.button} onPress={() => setIsRunning(!isRunning)}>
                 <Text style={styles.buttonText}>{isRunning ? 'PAUSE' : 'START'}</Text>
@@ -178,10 +231,10 @@ const MainApp = ({ user, onLogout }) => {
                 <TextInput style={styles.inputBox} placeholder="Paste notes..." placeholderTextColor="#888" multiline value={noteText} onChangeText={setNoteText} />
                 <View style={{flexDirection: 'row', gap: 10, marginTop: 10}}>
                     <TouchableOpacity style={[styles.analyzeButton, {flex: 1}]} onPress={analyzeNote} disabled={isLoading}>
-                        {isLoading ? <ActivityIndicator color="#FFF"/> : <Text style={styles.buttonText}>✨ ANALYZE</Text>}
+                        {isLoading ? <ActivityIndicator color="#FFF"/> : <Text style={styles.buttonText}>ANALYZE</Text>}
                     </TouchableOpacity>
                     <TouchableOpacity style={[styles.scanButton, {flex: 1}]} onPress={pickImage} disabled={isLoading}>
-                        <Text style={styles.buttonText}>📷 SCAN</Text>
+                        <Text style={styles.buttonText}>SCAN</Text>
                     </TouchableOpacity>
                 </View>
             </View>
@@ -190,7 +243,7 @@ const MainApp = ({ user, onLogout }) => {
             {aiSummary ? (
                 <View style={styles.summaryContainer}>
                     <View style={{flexDirection:'row', justifyContent:'space-between'}}>
-                        <Text style={styles.summaryTitle}>✨ Summary:</Text>
+                        <Text style={styles.summaryTitle}>Summary:</Text>
                         <TouchableOpacity onPress={speakSummary}><Text style={{fontSize:22}}>🗣️</Text></TouchableOpacity>
                     </View>
                     <Text style={styles.summaryText}>{aiSummary}</Text>
@@ -320,4 +373,18 @@ const styles = StyleSheet.create({
         fontSize: 10,
         marginTop: 5
     },
+
+    scheduleContainer: { 
+        width: '100%', 
+        marginBottom: 20
+    },
+    sectionTitle: { 
+        color: '#FFE2AF',
+        fontSize: 18,
+        fontWeight: 'bold',
+        marginBottom: 10 },
+    scheduleCard: { backgroundColor: '#547792', padding: 15, borderRadius: 10, marginRight: 10, width: 140 },
+    scheduleTopic: { color: 'white', fontWeight: 'bold', fontSize: 16 },
+    scheduleSub: { color: '#DDD', fontSize: 12 },
+    smallBtn: { padding: 5, borderRadius: 5, flex: 1, alignItems:'center' },
 });

@@ -3,7 +3,7 @@ from flask_cors import CORS
 import sqlite3
 import os
 import platform
-import json # 👈 Crucial for saving lists to DB
+import json 
 from datetime import datetime, timedelta
 
 # AI Libraries
@@ -44,20 +44,21 @@ def init_db():
     
     # 1. Create Users Table
     c.execute('''CREATE TABLE IF NOT EXISTS users
-                (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT UNIQUE NOT NULL,
-                password TEXT NOT NULL)''')
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  username TEXT UNIQUE NOT NULL,
+                  password TEXT NOT NULL)''')
 
-    # 2. Create Notes Table (With Flashcards support)
+    # 2. Create Notes Table (With Flashcards & Review Date support)
     c.execute('''CREATE TABLE IF NOT EXISTS notes
-                (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                content TEXT,
-                summary TEXT,
-                keywords TEXT,
-                quiz_data TEXT,
-                flashcards TEXT,
-                date TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
-                
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  content TEXT,
+                  summary TEXT,
+                  keywords TEXT,
+                  quiz_data TEXT,
+                  flashcards TEXT,
+                  date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                  next_review_date TIMESTAMP)''') 
+                  
     conn.commit()
     conn.close()
 
@@ -82,6 +83,25 @@ def generate_flashcards(text, keywords):
     except Exception as e:
         print(f"Flashcard Error: {e}")
         return []
+
+# --- 💾 NEW HELPER: SAVE TO DB WITH DATE ---
+def save_note_to_db(raw_text, ai_summary, ai_keywords, ai_quiz, ai_flashcards):
+    # 👇 TEST MODE: Set date to NOW so it appears immediately in the app
+    # Change this line back to "+ timedelta(days=1)" for the final exam!
+    review_date = datetime.now().isoformat() 
+    
+    conn = sqlite3.connect('studybuddy.db')
+    c = conn.cursor()
+    
+    c.execute('''INSERT INTO notes 
+                 (content, summary, keywords, quiz_data, flashcards, next_review_date) 
+                 VALUES (?, ?, ?, ?, ?, ?)''', 
+              (raw_text, ai_summary, json.dumps(ai_keywords), json.dumps(ai_quiz), json.dumps(ai_flashcards), review_date))
+    
+    new_id = c.lastrowid
+    conn.commit()
+    conn.close()
+    return new_id
 
 # --- 🔐 AUTH ROUTES ---
 
@@ -153,13 +173,8 @@ def upload_note():
     # 4. Generate Flashcards
     flashcards = generate_flashcards(text, keywords)
 
-    # Save to DB
-    conn = sqlite3.connect('studybuddy.db')
-    c = conn.cursor()
-    c.execute("INSERT INTO notes (content, summary, keywords, quiz_data, flashcards) VALUES (?, ?, ?, ?, ?)", 
-            (text, summary, json.dumps(keywords), json.dumps(quiz), json.dumps(flashcards)))
-    conn.commit()
-    conn.close()
+    # 5. Save using the new Helper
+    save_note_to_db(text, summary, keywords, quiz, flashcards)
 
     return jsonify({
         "summary": summary,
@@ -187,6 +202,9 @@ def upload_image():
     
     keywords = [w for w in set(nltk.word_tokenize(text)) if len(w) > 6][:5]
     flashcards = generate_flashcards(text, keywords)
+    
+    # Save using the new Helper (Quiz is None for images for now)
+    save_note_to_db(text, summary, keywords, None, flashcards)
 
     return jsonify({
         "original_text": text,
@@ -217,6 +235,54 @@ def get_history():
         })
     
     return jsonify(history)
+
+
+# --- 📅 NEW: SMART SCHEDULING ROUTES ---
+
+@app.route('/schedule/due', methods=['GET'])
+def get_due_notes():
+    """Get all notes that need to be reviewed today (or are overdue)"""
+    conn = sqlite3.connect('studybuddy.db')
+    c = conn.cursor()
+    
+    # Get notes where next_review_date is today or in the past
+    now = datetime.now().isoformat()
+    c.execute("SELECT id, summary, keywords, flashcards, quiz_data FROM notes WHERE next_review_date <= ? ORDER BY next_review_date ASC", (now,))
+    rows = c.fetchall()
+    conn.close()
+
+    due_list = []
+    for row in rows:
+        due_list.append({
+            "id": row[0],
+            "summary": row[1],
+            "topic": json.loads(row[2])[0] if row[2] else "General", # Use first keyword as topic
+            "flashcards": json.loads(row[3]) if row[3] else [],
+            "quiz": json.loads(row[4]) if row[4] else None
+        })
+    
+    return jsonify(due_list)
+
+@app.route('/schedule/update', methods=['POST'])
+def update_schedule():
+    """Algorithm: Easy = +3 days, Hard = +1 day"""
+    data = request.json
+    note_id = data.get('note_id')
+    performance = data.get('performance') # 'easy' (pass) or 'hard' (fail)
+    
+    if not note_id: return jsonify({"error": "Missing ID"}), 400
+
+    # 🧠 The "Smart" Logic
+    days_to_add = 3 if performance == 'easy' else 1
+    new_date = (datetime.now() + timedelta(days=days_to_add)).isoformat()
+
+    conn = sqlite3.connect('studybuddy.db')
+    c = conn.cursor()
+    c.execute("UPDATE notes SET next_review_date = ? WHERE id = ?", (new_date, note_id))
+    conn.commit()
+    conn.close()
+
+    return jsonify({"message": f"Rescheduled for {days_to_add} days later!"})
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000, host='0.0.0.0')
